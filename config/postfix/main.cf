@@ -1,0 +1,146 @@
+# ─────────────────────────────────────────────────────────────
+# Postfix main.cf — variables substituted by entrypoint.sh
+# ─────────────────────────────────────────────────────────────
+
+# Identity
+myhostname = MAIL_DOMAIN_PLACEHOLDER
+mydomain = DOMAIN_PLACEHOLDER
+myorigin = $mydomain
+
+# Network
+inet_interfaces = all
+inet_protocols = ipv4
+
+# Local domains
+mydestination = $myhostname, localhost.$mydomain, localhost
+mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
+
+# Local delivery via Dovecot LMTP
+virtual_transport = lmtp:inet:dovecot:24
+virtual_mailbox_domains = DOMAIN_PLACEHOLDER
+virtual_mailbox_maps = hash:/etc/postfix/virtual_mailbox
+virtual_alias_maps = hash:/etc/postfix/virtual_alias
+
+# Inbound TLS (smtpd)
+smtpd_tls_cert_file = /etc/letsencrypt/live/DOMAIN_PLACEHOLDER/fullchain.pem
+smtpd_tls_key_file  = /etc/letsencrypt/live/DOMAIN_PLACEHOLDER/privkey.pem
+smtpd_tls_security_level = may
+smtpd_tls_auth_only = yes
+smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtpd_tls_ciphers = high
+smtpd_tls_mandatory_ciphers = high
+smtpd_tls_exclude_ciphers = aNULL, eNULL, EXPORT, DES, RC4, MD5, PSK, aECDH, EDH-DSS-DES-CBC3-SHA, EDH-RSA-DES-CBC3-SHA, KRB5-DES-CBC3-SHA
+smtpd_tls_loglevel = 1
+smtpd_tls_session_cache_database = btree:${data_directory}/smtpd_scache
+
+# Outbound TLS (smtp)
+smtp_tls_security_level = may
+smtp_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1
+smtp_tls_ciphers = high
+smtp_tls_loglevel = 1
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+
+# SASL (authentication via Dovecot)
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = inet:dovecot:12345
+smtpd_sasl_auth_enable = yes
+smtpd_sasl_security_options = noanonymous, noplaintext
+smtpd_sasl_tls_security_options = noanonymous
+broken_sasl_auth_clients = yes
+
+# SMTP restrictions
+smtpd_helo_required = yes
+
+smtpd_helo_restrictions =
+    permit_mynetworks,
+    reject_non_fqdn_helo_hostname,
+    reject_invalid_helo_hostname,
+    permit
+
+smtpd_sender_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_non_fqdn_sender,
+    reject_unknown_sender_domain,
+    permit
+
+smtpd_recipient_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_non_fqdn_recipient,
+    reject_unknown_recipient_domain,
+    reject_unauth_destination,
+    reject_rbl_client zen.spamhaus.org,
+    reject_rbl_client bl.spamcop.net,
+    reject_rbl_client b.barracudacentral.org,
+    permit
+
+smtpd_relay_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_unauth_destination
+
+smtpd_data_restrictions =
+    reject_unauth_pipelining,
+    reject_multi_recipient_bounce,
+    permit
+
+smtpd_client_restrictions =
+    permit_mynetworks,
+    reject_unknown_reverse_client_hostname,
+    permit
+
+# Postscreen
+postscreen_access_list = permit_mynetworks,
+    cidr:/etc/postfix/postscreen_access.cidr
+postscreen_blacklist_action = drop
+postscreen_greet_action = enforce
+postscreen_dnsbl_action = enforce
+postscreen_dnsbl_sites =
+    zen.spamhaus.org*3,
+    b.barracudacentral.org*2,
+    bl.spamcop.net*1
+postscreen_dnsbl_threshold = 3
+postscreen_dnsbl_ttl = 5m
+postscreen_greet_banner = $smtpd_banner
+postscreen_bare_newline_enable = yes
+postscreen_bare_newline_action = enforce
+postscreen_non_smtp_command_enable = yes
+postscreen_non_smtp_command_action = drop
+postscreen_pipelining_enable = yes
+postscreen_pipelining_action = enforce
+postscreen_cache_map = btree:$data_directory/postscreen_cache
+postscreen_cache_retention_time = 7d
+
+# Rate limiting (anvil)
+smtpd_client_connection_rate_limit = 30
+smtpd_client_connection_count_limit = 10
+smtpd_client_message_rate_limit = 30
+smtpd_client_recipient_rate_limit = 100
+anvil_rate_time_unit = 60s
+
+# Milters: Rspamd + OpenDKIM + OpenDMARC
+smtpd_milters =
+    inet:rspamd:11332,
+    inet:opendkim:8891,
+    inet:opendmarc:8893
+non_smtpd_milters = $smtpd_milters
+milter_default_action = accept
+milter_protocol = 6
+
+# Message size limits (25MB)
+message_size_limit = 26214400
+mailbox_size_limit = 0
+
+# Miscellaneous
+biff = no
+append_dot_mydomain = no
+readme_directory = no
+compatibility_level = 3.6
+
+# Banner (do not reveal version)
+smtpd_banner = $myhostname ESMTP
+
+# Queue
+maximal_queue_lifetime = 5d
+bounce_queue_lifetime = 1d

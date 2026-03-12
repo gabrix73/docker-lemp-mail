@@ -1,0 +1,246 @@
+version: '3.9'
+
+services:
+
+  # ─────────────────────────────────────────
+  # MySQL
+  # ─────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: mailwp-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      TZ: ${TZ}
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+      - ./config/mysql/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+      - ./scripts/mysql-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # PHP-FPM
+  # ─────────────────────────────────────────
+  php:
+    build:
+      context: ./build/php
+      dockerfile: Dockerfile
+    container_name: mailwp-php
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ./data/www/wordpress:/var/www/wordpress
+      - ./data/www/roundcube:/var/www/roundcube
+      - ./config/php/php.ini:/usr/local/etc/php/conf.d/custom.ini:ro
+    networks:
+      - backend
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────
+  # Nginx
+  # ─────────────────────────────────────────
+  nginx:
+    image: nginx:stable-alpine
+    container_name: mailwp-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/sites/:/etc/nginx/sites/:ro
+      - ./data/www/wordpress:/var/www/wordpress:ro
+      - ./data/www/roundcube:/var/www/roundcube:ro
+      - ./data/certs:/etc/letsencrypt:ro
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      - php
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ─────────────────────────────────────────
+  # Redis (for Rspamd)
+  # ─────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: mailwp-redis
+    restart: unless-stopped
+    networks:
+      - mailnet
+    volumes:
+      - ./data/redis:/data
+
+  # ─────────────────────────────────────────
+  # Rspamd (antispam milter)
+  # ─────────────────────────────────────────
+  rspamd:
+    image: rspamd/rspamd:latest
+    container_name: mailwp-rspamd
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ./config/rspamd/local.d:/etc/rspamd/local.d:ro
+      - ./config/rspamd/override.d:/etc/rspamd/override.d:ro
+      - ./data/rspamd:/var/lib/rspamd
+    networks:
+      - mailnet
+    depends_on:
+      - redis
+    ports:
+      - "127.0.0.1:11334:11334"   # web UI (local only)
+
+  # ─────────────────────────────────────────
+  # OpenDKIM (DKIM signing milter)
+  # ─────────────────────────────────────────
+  opendkim:
+    image: instrumentisto/opendkim:latest
+    container_name: mailwp-opendkim
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ./config/opendkim/opendkim.conf:/etc/opendkim/opendkim.conf:ro
+      - ./config/opendkim/TrustedHosts:/etc/opendkim/TrustedHosts:ro
+      - ./data/opendkim/keys:/etc/opendkim/keys
+    networks:
+      - mailnet
+
+  # ─────────────────────────────────────────
+  # OpenDMARC (DMARC verification milter)
+  # ─────────────────────────────────────────
+  opendmarc:
+    image: instrumentisto/opendmarc:latest
+    container_name: mailwp-opendmarc
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ./config/opendmarc/opendmarc.conf:/etc/opendmarc/opendmarc.conf:ro
+    networks:
+      - mailnet
+
+  # ─────────────────────────────────────────
+  # ClamAV (antivirus)
+  # ─────────────────────────────────────────
+  clamav:
+    image: clamav/clamav:stable
+    container_name: mailwp-clamav
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - ./config/clamav/clamd.conf:/etc/clamav/clamd.conf:ro
+      - ./data/clamav:/var/lib/clamav
+    networks:
+      - mailnet
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s   # ClamAV takes time to update its DB
+
+  # ─────────────────────────────────────────
+  # Postfix (MTA + Postscreen)
+  # ─────────────────────────────────────────
+  postfix:
+    build:
+      context: ./build/postfix
+      dockerfile: Dockerfile
+    container_name: mailwp-postfix
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+      MAIL_DOMAIN: ${MAIL_DOMAIN}
+      TZ: ${TZ}
+    ports:
+      - "25:25"      # SMTP
+      - "587:587"    # Submission
+      - "465:465"    # SMTPS
+    volumes:
+      - ./config/postfix:/etc/postfix/custom:ro
+      - ./data/certs:/etc/letsencrypt:ro
+      - ./data/mail:/var/mail
+      - ./scripts/entrypoint-postfix.sh:/entrypoint.sh:ro
+    networks:
+      - mailnet
+      - frontend
+    depends_on:
+      - rspamd
+      - opendkim
+      - opendmarc
+      - clamav
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+
+  # ─────────────────────────────────────────
+  # Dovecot (IMAP/POP3)
+  # ─────────────────────────────────────────
+  dovecot:
+    build:
+      context: ./build/dovecot
+      dockerfile: Dockerfile
+    container_name: mailwp-dovecot
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+      TZ: ${TZ}
+    ports:
+      - "143:143"    # IMAP
+      - "993:993"    # IMAPS
+      - "110:110"    # POP3
+      - "995:995"    # POP3S
+    volumes:
+      - ./config/dovecot:/etc/dovecot/custom:ro
+      - ./data/certs:/etc/letsencrypt:ro
+      - ./data/mail:/var/mail
+      - ./scripts/entrypoint-dovecot.sh:/entrypoint.sh:ro
+    networks:
+      - mailnet
+    depends_on:
+      - mysql
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+
+  # ─────────────────────────────────────────
+  # Fail2ban
+  # ─────────────────────────────────────────
+  fail2ban:
+    image: crazymax/fail2ban:latest
+    container_name: mailwp-fail2ban
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      TZ: ${TZ}
+      F2B_LOG_LEVEL: INFO
+    volumes:
+      - ./config/fail2ban/jail.local:/data/jail.d/jail.local:ro
+      - ./config/fail2ban/filter.d:/data/filter.d:ro
+      - ./data/fail2ban:/data
+      - /var/log:/var/log:ro
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+  mailnet:
+    driver: bridge

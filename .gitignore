@@ -1,0 +1,14 @@
+# Dati sensibili — NON committare
+.env
+data/
+dns-records.txt
+
+# Chiavi DKIM generate
+data/opendkim/
+
+# Certificati
+data/certs/
+
+# Cache
+*.pyc
+__pycache__/
