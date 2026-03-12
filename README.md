@@ -1,6 +1,6 @@
-# docker-mailwp
+# docker-lemp-mail
 
-[![Build & Push](https://github.com/gabrix73/docker-mailwp/actions/workflows/docker-build.yml/badge.svg)](https://github.com/gabrix73/docker-mailwp/actions/workflows/docker-build.yml)
+[![Build & Push](https://github.com/gabrix73/docker-lemp-mail/actions/workflows/docker-build.yml/badge.svg)](https://github.com/gabrix73/docker-lemp-mail/actions/workflows/docker-build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Docker Pulls](https://img.shields.io/docker/pulls/gabrix73/mailwp-php)](https://hub.docker.com/r/gabrix73/mailwp-php)
 
@@ -57,8 +57,8 @@ Postfix · Dovecot · Rspamd · OpenDKIM · OpenDMARC · ClamAV · Nginx · PHP 
 ### Install
 
 ```bash
-git clone https://github.com/gabrix73/docker-mailwp.git
-cd docker-mailwp
+git clone https://github.com/gabrix73/docker-lemp-mail.git
+cd docker-lemp-mail
 bash setup.sh
 ```
 
@@ -219,7 +219,7 @@ docker-compose start mysql
 ## Project Structure
 
 ```
-docker-mailwp/
+docker-lemp-mail/
 ├── setup.sh                  ← interactive setup wizard
 ├── verify-dns.sh             ← DNS propagation checker
 ├── docker-compose.yml

@@ -1,4 +1,4 @@
-# Progetto: docker-mailwp
+# Progetto: docker-lemp-mail
 
 **Avviato:** 2026-03-12
 **Obiettivo:** Stack Docker completo per mail server + WordPress con wizard di setup
